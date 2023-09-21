@@ -1,28 +1,33 @@
 mod app;
+mod config;
 mod db;
 
 use actix_cors::Cors;
 use actix_web::{http::header, web, App, HttpServer};
-use dotenv::dotenv;
+use sqlx::{Pool, Postgres};
 
-use crate::app::user;
+use crate::app::modules;
 
 #[derive(Debug)]
 pub struct AppState {
-    pool: sqlx::PgPool,
+    pool: Pool<Postgres>,
+    config: config::Config,
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    dotenv().ok();
-
-    let host = std::env::var("HOST").expect("HOST must be set");
-    let port = std::env::var("PORT").expect("PORT must be set");
-
+    let config = config::load_config().await;
     let pool = db::conn().await;
-    db::load_tables(&pool).await;
 
-    println!("Starting server at http://{}:{}", host, port);
+    let host = config.host.clone();
+    let port = config.port.clone();
+
+    sqlx::migrate!()
+        .run(&pool)
+        .await
+        .expect("Failed to run migrations");
+
+    println!("Starting server at http://{}:{}", config.host, config.port);
 
     HttpServer::new(move || {
         let cors = Cors::default()
@@ -35,9 +40,13 @@ async fn main() -> std::io::Result<()> {
             ]);
 
         App::new()
-            .app_data(web::Data::new(AppState { pool: pool.clone() }))
+            .app_data(web::Data::new(AppState {
+                pool: pool.clone(),
+                config: config.clone(),
+            }))
             .wrap(cors)
-            .configure(user::routes::load)
+            .configure(modules::user::routes::load)
+            .configure(modules::auth::routes::load)
     })
     .bind(format!("{}:{}", host, port))?
     .run()
