@@ -1,4 +1,4 @@
-use actix_web::{Responder, web, Result};
+use actix_web::{web, error, Responder, Result};
 use actix_web::post;
 use serde::{Deserialize, Serialize};
 use scrypt::{
@@ -9,24 +9,24 @@ use scrypt::{
     Scrypt
 };
 use jsonwebtoken::{encode, Header, EncodingKey};
-
 use crate::AppState;
-use crate::app::models::user;
+use crate::app::models::{CommonResponse, NoResponseData};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct LoginBody {
-    user_name: String,
+    username: String,
     password: String,
-}
-
-#[derive(Serialize)]
-pub struct LoginResponse {
-    token: String
 }
 
 #[derive(Serialize)]
 pub struct LoginJwtPayload {
     id: String
+}
+
+#[derive(Deserialize, Serialize, sqlx::FromRow)]
+pub struct FoundUser {
+    id: uuid::Uuid,
+    password: Option<String>
 }
 
 #[post("/auth/login")]
@@ -35,9 +35,9 @@ pub async fn login(
     info: web::Json<LoginBody>
 ) -> Result<impl Responder> {
     let found_user = sqlx::query_as!(
-        user::User,
-        "SELECT * FROM users WHERE user_name = $1",
-        info.user_name
+        FoundUser,
+        r#"SELECT id, password FROM users WHERE username = $1"#,
+        &info.username
     )
         .fetch_one(&state.pool)
         .await
@@ -60,7 +60,11 @@ pub async fn login(
             &EncodingKey::from_secret(&state.config.secret_key.as_bytes()),
         ).unwrap().to_string();
 
-        Ok(web::Json(LoginResponse { token }))
+        Ok(web::Json(CommonResponse {
+            status: 200,
+            data: Some(token),
+            message: Some("Login successful".to_string())
+        }))
     } else {
         Err(actix_web::error::ErrorUnauthorized("Invalid credentials"))
     }
@@ -68,9 +72,9 @@ pub async fn login(
 
 #[derive(Deserialize)]
 pub struct RegisterBody {
-    first_name: String,
-    last_name: String,
-    user_name: String,
+    firstname: String,
+    lastname: String,
+    username: String,
     email: String,
     password: String
 }
@@ -85,22 +89,25 @@ pub async fn register(
         .hash_password(info.password.as_bytes(), &salt)
         .unwrap();
 
-    let created_user = sqlx::query!(
-        "INSERT INTO users (first_name, last_name, user_name, email, password)
-        VALUES ($1, $2, $3, $4, $5)",
-        info.first_name,
-        info.last_name,
-        info.user_name,
-        info.email,
-        hashed_password.to_string()
+    match sqlx::query!(
+        r#"
+            INSERT INTO users (firstname, lastname, username, email, password)
+            VALUES ($1, $2, $3, $4, $5)
+        "#,
+        &info.firstname,
+        &info.lastname,
+        &info.username,
+        &info.email,
+        &hashed_password.to_string()
     )
-        .execute(&state.pool)
+        .fetch_optional(&state.pool)
         .await
-        .is_ok();
-
-    if created_user {
-        Ok(web::Json("User created"))
-    } else {
-        Err(actix_web::error::ErrorBadRequest("Failed to create user"))
-    }
+        .is_ok() {
+            true => Ok(web::Json(CommonResponse {
+                status: 200,
+                data: NoResponseData,
+                message: Some("User created successfully".to_string())
+            })),
+            _ => Err(error::ErrorBadRequest("Failed to create user"))
+        }
 }

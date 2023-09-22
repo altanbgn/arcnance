@@ -17,15 +17,10 @@ pub struct AppState {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let config = config::load_config().await;
-    let pool = db::conn().await;
+    let pool = db::conn(&config.database_url).await;
 
     let host = config.host.clone();
     let port = config.port.clone();
-
-    sqlx::migrate!()
-        .run(&pool)
-        .await
-        .expect("Failed to run migrations");
 
     println!("Starting server at http://{}:{}", config.host, config.port);
 
@@ -47,6 +42,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(cors)
             .configure(modules::user::routes::load)
             .configure(modules::auth::routes::load)
+            .configure(modules::transaction::routes::load)
     })
     .bind(format!("{}:{}", host, port))?
     .run()
