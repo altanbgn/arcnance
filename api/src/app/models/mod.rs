@@ -1,13 +1,11 @@
 pub mod user;
 
-use serde::Serialize;
-
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub struct CommonResponse<T> {
     pub message: Option<String>,
     pub data: T,
     pub status: u16,
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 pub struct NoResponseData;
